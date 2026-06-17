@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "mame": {
+      "command": "mame-mcp-bridge"
+    }
+  }
+}

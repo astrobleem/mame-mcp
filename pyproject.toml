@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mame_mcp"
+version = "0.1.0"
+description = "MCP bridge and Lua harnesses for driving MAME in arcade-to-SNES porting workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-2.0-or-later" }
+authors = [
+    { name = "Chad Doebelin" },
+]
+keywords = ["mame", "mcp", "arcade", "emulator", "debugger", "tracing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: System :: Emulators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+]
+dependencies = []
+
+[project.scripts]
+mame-mcp-bridge = "mame_mcp.server:main"
+mame-mcp-tools = "mame_mcp.tools:main"
+
+[tool.setuptools]
+packages = ["mame_mcp"]

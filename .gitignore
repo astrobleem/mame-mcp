@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+
+# Local reference/source checkouts and generated MAME state.
+Mesen2/
+.mame_mcp/
+nvram/
+cfg/
+snap/
+sta/
+memcard/
