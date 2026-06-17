@@ -167,6 +167,58 @@ TOOLS: "OrderedDict[str, dict[str, Any]]" = OrderedDict(
                 },
             },
         ),
+        (
+            "run_lua_inline",
+            {
+                "category": "lua",
+                "summary": "Run caller-supplied MAME Lua source (string, not a path) headlessly; optionally read back an artifact file.",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "lua": {"type": "string", "description": "Lua source to run as an autoboot script."},
+                        **COMMON_MACHINE_PROPS,
+                        "frames": {"type": "integer", "description": "Frame budget for safety seconds.", "default": 60},
+                        "artifactPath": {"type": "string", "description": "Optional file the script writes; its text is returned."},
+                        "timeoutSec": {"type": "integer", "description": "Process timeout in seconds."},
+                    },
+                    "required": ["lua"],
+                    "additionalProperties": False,
+                },
+            },
+        ),
+        (
+            "capture_leaf_io",
+            {
+                "category": "trace",
+                "summary": "Golden-vector capture for a pure leaf that transforms one memory word/byte in place (RNG/counter/accumulator). Injects inputs via taps, records output + regs + CCR. Independent oracle for the transpiler differential harness.",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        **COMMON_MACHINE_PROPS,
+                        "entryPc": {"type": "integer", "description": "Function entry address (e.g. 0x412)."},
+                        "varAddress": {"type": "integer", "description": "Absolute address of the in/out word the leaf reads then writes (e.g. 0xF0170E)."},
+                        "width": {"type": "integer", "description": "Operand width in bytes: 1 or 2.", "default": 2},
+                        "pcLow": {"type": "integer", "description": "Low PC bound identifying 'inside this function' (default entryPc-2)."},
+                        "pcHigh": {"type": "integer", "description": "High PC bound (default entryPc+0x40)."},
+                        "inputs": {
+                            "type": "array",
+                            "description": "Test input values to inject (integers).",
+                            "items": {"type": "integer"},
+                        },
+                        "regs": {
+                            "type": "array",
+                            "description": "Register names to capture at write-back (e.g. [\"D7\"]).",
+                            "items": {"type": "string"},
+                        },
+                        "frameCap": {"type": "integer", "description": "Max frames to run before giving up.", "default": 1500},
+                        "logPath": {"type": "string", "description": "Optional output log path."},
+                        "timeoutSec": {"type": "integer", "description": "Process timeout in seconds."},
+                    },
+                    "required": ["entryPc", "varAddress", "inputs"],
+                    "additionalProperties": False,
+                },
+            },
+        ),
     ]
 )
 

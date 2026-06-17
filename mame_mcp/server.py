@@ -11,8 +11,10 @@ from . import __version__
 from .mame import (
     MameMcpError,
     audit_romset,
+    capture_leaf_io,
     config_check,
     get_ioports,
+    run_lua_inline,
     run_lua_script,
     trace_cchip_superman,
     trace_memory_access,
@@ -30,6 +32,8 @@ HANDLERS: dict[str, ToolHandler] = {
     "trace_memory_access": trace_memory_access,
     "trace_cchip_superman": trace_cchip_superman,
     "run_lua_script": run_lua_script,
+    "run_lua_inline": run_lua_inline,
+    "capture_leaf_io": capture_leaf_io,
 }
 
 
