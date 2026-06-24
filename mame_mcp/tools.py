@@ -262,6 +262,8 @@ TOOLS: "OrderedDict[str, dict[str, Any]]" = OrderedDict(
             "schema": {"type": "object", "properties": {"field": {"type": "string"}, "value": {"type": "integer"}}, "required": ["field", "value"], "additionalProperties": False}}),
         ("mame_capture_game_tick", {"category": "live", "summary": "Run to the Nth GAME_TICK ($3A92) and snapshot regs + a memory region AT the prologue read (lockstep regsA/wramA primitive; entry a7 = SP+60).",
             "schema": {"type": "object", "properties": {"addr": {"type": "integer"}, "len": {"type": "integer"}, "nth": {"type": "integer", "default": 1}, "timeout": {"type": "number", "default": 60}}, "required": ["addr", "len"], "additionalProperties": False}}),
+        ("mame_drive_to_gameplay", {"category": "live", "summary": "BOOT-AWARE drive to a running game: wait for the $0818 idle (boot done), inject clean coin/start EDGES, confirm GAME_TICK. Replay-robust where a fixed-frame .inp desyncs (the C-Chip boot handshake isn't bit-reproducible).",
+            "schema": {"type": "object", "properties": {"coin": {"type": "string", "default": "Coin 1"}, "start": {"type": "string", "default": "1 Player Start"}, "credits": {"type": "integer", "default": 1}}, "additionalProperties": False}}),
         ("mame_exec_lua_live", {"category": "live", "summary": "Run Lua on the live machine (vars M/machine = manager.machine); returns its value.",
             "schema": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"], "additionalProperties": False}}),
     ]

@@ -86,6 +86,12 @@ def mame_capture_game_tick(args):
         nth=int(args.get("nth", 1)), timeout=float(args.get("timeout", 60))))
 
 
+def mame_drive_to_gameplay(args):
+    return _wrap(lambda: _require().drive_to_gameplay(
+        coin=args.get("coin", "Coin 1"), start=args.get("start", "1 Player Start"),
+        credits=int(args.get("credits", 1))))
+
+
 LIVE_HANDLERS = {
     "mame_launch": mame_launch,
     "mame_session_stop": mame_session_stop,
@@ -101,5 +107,6 @@ LIVE_HANDLERS = {
     "mame_write_memory": mame_write_memory,
     "mame_send_input": mame_send_input,
     "mame_capture_game_tick": mame_capture_game_tick,
+    "mame_drive_to_gameplay": mame_drive_to_gameplay,
     "mame_exec_lua_live": mame_exec_lua_live,
 }

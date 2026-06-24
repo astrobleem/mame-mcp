@@ -117,3 +117,28 @@ class MameSession:
     def write_block(self, addr, data, space=":maincpu"):
         hexs = data.hex() if isinstance(data, (bytes, bytearray)) else data
         return self.cmd("write_block", addr=addr, hex=hexs, space=space)
+
+    def drive_to_gameplay(self, coin="Coin 1", start="1 Player Start", idle_lo=0x818,
+                          idle_hi=0x81C, boot_steps=120, step=10, settle=24, credits=1):
+        """BOOT-AWARE drive to a running game. Waits for the $0818 main-loop idle (boot done,
+        however long it takes -- the C-Chip handshake isn't bit-reproducible, so fixed-frame
+        timing desyncs), then injects clean coin/start EDGES (pulse, not hold), then confirms
+        GAME_TICK is running. Replay-robust where a recorded .inp is not. Returns a summary."""
+        booted, pc = False, None
+        for _ in range(boot_steps):
+            r = self.get_regs()
+            pc = (r.get("PC") or r.get("CURPC", 0)) & 0xFFFFFF
+            if idle_lo <= pc <= idle_hi:
+                booted = True
+                break
+            self.run_frames(step)
+        if not booted:
+            raise MameError("boot idle ($%04X) not reached (last PC $%06X)" % (idle_lo, pc or 0))
+        for _ in range(credits):                     # coin edge(s)
+            self.send_input(coin, 1); self.run_frames(6); self.send_input(coin, 0); self.run_frames(settle)
+        self.send_input(start, 1); self.run_frames(6); self.send_input(start, 0); self.run_frames(settle)
+        cap = self.cmd("capture_game_tick", addr=0xF00000, len=2, nth=2,
+                       maxFrames=400, timeout=20)    # confirm GAME_TICK actually runs
+        reached = bool(cap.get("registers"))
+        return {"booted": True, "gameplay": reached,
+                "tick_pc": cap.get("pc"), "frame": cap.get("frame")}
