@@ -219,6 +219,51 @@ TOOLS: "OrderedDict[str, dict[str, Any]]" = OrderedDict(
                 },
             },
         ),
+        # ---- persistent live session (Mesen-MCP-style control of one long-lived MAME) ----
+        (
+            "mame_launch",
+            {
+                "category": "live",
+                "summary": "Launch a PERSISTENT live MAME (headless + bridge) and keep it running across tool calls. Required before any other mame_* live tool.",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        **COMMON_MACHINE_PROPS,
+                        "stateDirectory": {"type": "string", "description": "MAME -state_directory (enables load/save state)."},
+                        "bootWait": {"type": "number", "description": "Seconds to wait for the bridge to become ready.", "default": 25},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        ),
+        ("mame_session_stop", {"category": "live", "summary": "Terminate the live MAME session.",
+            "schema": {**JSON_OBJECT, "properties": {}}}),
+        ("mame_session_status", {"category": "live", "summary": "Live session status (system, frame, paused).",
+            "schema": {**JSON_OBJECT, "properties": {}}}),
+        ("mame_pause", {"category": "live", "summary": "Pause the live machine (state stays readable).",
+            "schema": {**JSON_OBJECT, "properties": {}}}),
+        ("mame_resume", {"category": "live", "summary": "Resume the live machine.",
+            "schema": {**JSON_OBJECT, "properties": {}}}),
+        ("mame_run_frames", {"category": "live", "summary": "Run N frames then pause; returns the frame number.",
+            "schema": {"type": "object", "properties": {"n": {"type": "integer", "description": "Frames to advance."}}, "required": ["n"], "additionalProperties": False}}),
+        ("mame_load_state", {"category": "live", "summary": "Load a MAME save state by name (needs stateDirectory). Apply with a run_frames after.",
+            "schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False}}),
+        ("mame_save_state", {"category": "live", "summary": "Save a MAME save state by name.",
+            "schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False}}),
+        ("mame_get_regs", {"category": "live", "summary": "Read all CPU state registers (D0-D7,A0-A7,PC,SR,USP,...).",
+            "schema": {"type": "object", "properties": {"device": {"type": "string", "default": ":maincpu"}}, "additionalProperties": False}}),
+        ("mame_set_reg", {"category": "live", "summary": "Set one CPU register.",
+            "schema": {"type": "object", "properties": {"reg": {"type": "string"}, "value": {"type": "integer"}, "device": {"type": "string", "default": ":maincpu"}}, "required": ["reg", "value"], "additionalProperties": False}}),
+        ("mame_read_memory", {"category": "live", "summary": "Read a memory block (hex) from a device's program space.",
+            "schema": {"type": "object", "properties": {"addr": {"type": "integer"}, "len": {"type": "integer"}, "space": {"type": "string", "default": ":maincpu"}}, "required": ["addr", "len"], "additionalProperties": False}}),
+        ("mame_write_memory", {"category": "live", "summary": "Write a hex block to a device's program space.",
+            "schema": {"type": "object", "properties": {"addr": {"type": "integer"}, "hex": {"type": "string"}, "space": {"type": "string", "default": ":maincpu"}}, "required": ["addr", "hex"], "additionalProperties": False}}),
+        ("mame_send_input", {"category": "live", "summary": "Set an ioport field value (e.g. 'Coin 1', 'P1 Right').",
+            "schema": {"type": "object", "properties": {"field": {"type": "string"}, "value": {"type": "integer"}}, "required": ["field", "value"], "additionalProperties": False}}),
+        ("mame_capture_game_tick", {"category": "live", "summary": "Run to the Nth GAME_TICK ($3A92) and snapshot regs + a memory region AT the prologue read (lockstep regsA/wramA primitive; entry a7 = SP+60).",
+            "schema": {"type": "object", "properties": {"addr": {"type": "integer"}, "len": {"type": "integer"}, "nth": {"type": "integer", "default": 1}, "timeout": {"type": "number", "default": 60}}, "required": ["addr", "len"], "additionalProperties": False}}),
+        ("mame_exec_lua_live", {"category": "live", "summary": "Run Lua on the live machine (vars M/machine = manager.machine); returns its value.",
+            "schema": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"], "additionalProperties": False}}),
     ]
 )
 
@@ -228,6 +273,7 @@ CATEGORY_BLURBS = {
     "machine": "MAME machine metadata and ROM audit helpers.",
     "trace": "Generated Lua trace harnesses for arcade reverse engineering.",
     "lua": "Escape hatch for hand-written MAME Lua scripts.",
+    "live": "Persistent live-session control of one long-lived MAME (load state, step, read/write regs+memory, capture).",
 }
 
 

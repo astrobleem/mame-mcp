@@ -19,6 +19,7 @@ from .mame import (
     trace_cchip_superman,
     trace_memory_access,
 )
+from .live import LIVE_HANDLERS
 from .tools import tool_descriptions
 
 
@@ -34,6 +35,7 @@ HANDLERS: dict[str, ToolHandler] = {
     "run_lua_script": run_lua_script,
     "run_lua_inline": run_lua_inline,
     "capture_leaf_io": capture_leaf_io,
+    **LIVE_HANDLERS,   # persistent live-session tools (mame_launch, mame_get_regs, ...)
 }
 
 
