@@ -5,11 +5,13 @@ engineering. It is aimed at arcade-to-SNES porting work: memory access traces,
 input injection, ROM audit checks, IO-port discovery, and reproducible
 headless harnesses.
 
-This first cut is stock-MAME compatible. It drives MAME with generated
-`-autoboot_script` Lua sidecars instead of requiring a custom MAME binary. That
-keeps the useful tools available immediately; a deeper MAME source fork can be
-added later for live sockets, richer trace buffers, or debugger APIs that Lua
-cannot expose cleanly.
+Stock-MAME compatible — no custom MAME binary required. Two modes, both on stock MAME:
+the **stateless** tools drive MAME with generated `-autoboot_script` Lua sidecars (spawn,
+run, exit); the **live session** suite keeps a persistent MAME alive behind a bridge and
+exposes debugger-style live memory read/write, register access, run/pause, save/load
+state, and input injection across calls. A deeper MAME source fork is still only needed
+for the harder stuff (low-overhead instruction-trace ring buffers; device introspection
+Lua can't reach) — see [Fork Roadmap](#fork-roadmap).
 
 ## Quick Start
 
@@ -45,17 +47,42 @@ This repo includes a generic `.mcp.json` that only starts the bridge. Pass
 
 ## Tools
 
-Current implemented tools:
+Two families: **stateless** one-shot tools (each spawns MAME, does its job, exits) and a
+**live session** suite (one persistent MAME kept alive across calls — read/write/run/inject like
+a debugger). **25 tools** total.
+
+### Stateless (one-shot)
 
 | Tool | Purpose |
 |---|---|
-| `ping` | Verify the MCP bridge is alive. |
-| `config_check` | Show resolved MAME executable, working directory, system, and ROM path. |
-| `audit_romset` | Run `mame -verifyroms <system>`. |
-| `get_ioports` | Boot a machine briefly and list MAME Lua IO-port fields. |
-| `trace_memory_access` | Generate a Lua read/write tap trace for one or more CPU address ranges. |
-| `trace_cchip_superman` | Optional Superman helper built on `trace_memory_access`; no ROM path is baked in. |
-| `run_lua_script` | Run a caller-supplied MAME Lua script headlessly. |
+| `ping` | Echo back an optional payload; verify the MCP bridge is alive. |
+| `config_check` | Resolve MAME env/config paths and report which required pieces exist. |
+| `audit_romset` | Run `mame -verifyroms <system>` and return the audit tail. |
+| `get_ioports` | Boot a machine briefly and list MAME Lua IO-port fields (for input injection). |
+| `trace_memory_access` | Install Lua read/write taps over CPU address ranges; log deduped accesses. |
+| `trace_cchip_superman` | Superman helper: trace `$900000-$900FFF` C-Chip accesses + the `$900803` status verdict. |
+| `run_lua_script` | Run a caller-supplied MAME Lua autoboot script (by path), headlessly. |
+| `run_lua_inline` | Run caller-supplied MAME Lua source (string, not a path); optional artifact read-back. |
+| `capture_leaf_io` | Golden-vector capture for a pure leaf that transforms one word/byte in place — inject inputs via taps, record output+regs+CCR. Independent oracle for a transpiler differential harness. |
+
+### Live session (persistent MAME, debugger-style)
+
+Call `mame_launch` first (keeps MAME running across calls); the rest operate on that session.
+
+| Tool | Purpose |
+|---|---|
+| `mame_launch` | Launch a PERSISTENT live MAME (headless + bridge). Required before any other `mame_*` tool. |
+| `mame_session_status` | Live session status (system, frame, paused). |
+| `mame_session_stop` | Terminate the live session. |
+| `mame_pause` / `mame_resume` | Pause / resume the machine (state stays readable while paused). |
+| `mame_run_frames` | Run N frames then pause; returns the frame number. |
+| `mame_read_memory` / `mame_write_memory` | Read / write a hex block in a device's program space. |
+| `mame_get_regs` / `mame_set_reg` | Read all CPU registers (D0-D7/A0-A7/PC/SR/USP/…) / set one. |
+| `mame_save_state` / `mame_load_state` | Save / load a MAME save state by name (needs `stateDirectory`). |
+| `mame_send_input` | Set an ioport field value (e.g. `Coin 1`, `P1 Right`). |
+| `mame_exec_lua_live` | Run Lua on the live machine (`M`/`machine` = `manager.machine`); returns its value. |
+| `mame_capture_game_tick` | Run to the Nth GAME_TICK and snapshot regs + a memory region at the prologue read (lockstep primitive). |
+| `mame_drive_to_gameplay` | Boot-aware drive to a running game: wait for idle, inject clean coin/start edges, confirm GAME_TICK (replay-robust where a fixed `.inp` desyncs). |
 
 The MCP responses return JSON text with command lines, log paths, return codes,
 stderr/stdout tails, and parsed trace summaries where applicable.
@@ -122,13 +149,15 @@ The stock-MAME Lua layer can cover a lot:
 - screenshots via MAME command-line/video options,
 - reproducible generated scripts and logs.
 
-A true MAME source fork becomes worthwhile when we need:
+Already delivered **without** a fork, via the live-session bridge (stock MAME + a persistent
+process): a long-lived session, debugger-grade live memory reads/writes, register get/set,
+run/pause, and save/load state (the `mame_*` tools above).
 
-- a long-lived JSON-RPC socket inside MAME,
-- debugger-grade live memory reads/writes without generated scripts,
+A true MAME source fork becomes worthwhile only for what Lua/the bridge can't do well:
+
 - instruction trace ring buffers with low overhead,
 - tile/sprite/sound device introspection not exposed through Lua,
-- stable save/load state and screenshot APIs as one-shot MCP calls.
+- screenshot APIs as one-shot MCP calls.
 
 The MCP tool names and response shapes here are intentionally similar to the
 Mesen MCP bridge so agents can learn one mental model and apply it to both
