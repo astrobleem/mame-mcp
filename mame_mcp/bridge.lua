@@ -179,12 +179,12 @@ end
 -- regs + a memory region into the response. The lockstep regsA/wramA/wramB primitive. movem.l
 -- at $3A92 has already pushed 60 bytes when $F00000 is read, so entry a7 = captured a7 + 60
 -- (the client reconstructs). `busy` guards the in-tap region read (which re-touches $F00000).
-local cap = { arm=false, done=false, busy=false, count=0, nth=1, addr=0, len=0, tap=nil, result=nil, deadline=0 }
+local cap = { arm=false, done=false, busy=false, count=0, nth=1, addr=0, len=0, tap=nil, result=nil, deadline=0, mode="tick", pc=0, tap_pc=nil, tap_pc_at=-1, exp_ret=-1, exp_sp=-1 }
 handlers.capture_game_tick = function(p)
   if not cap.tap then
     local sp = space_of(":maincpu")
     cap.tap = sp:install_read_tap(0xF00000, 0xF00001, "mcp_cap", function(off, data, mask)
-      if cap.busy or not cap.arm then return data end
+      if cap.busy or not cap.arm or cap.mode ~= "tick" then return data end
       local cpu = M.devices[":maincpu"]
       local pc = cpu.state["PC"].value & 0xFFFFFF
       if pc < 0x3A92 or pc > 0x3AB0 then return data end
@@ -200,6 +200,51 @@ handlers.capture_game_tick = function(p)
       return data
     end)
   end
+  cap.mode = "tick"
+  cap.addr = p.addr; cap.len = p.len; cap.nth = p.nth or 1; cap.count = 0; cap.done = false; cap.arm = true
+  local s = M.screens:at(1); cap.deadline = (s and s:frame_number() or 0) + (p.maxFrames or 1200)
+  emu.unpause()
+  return nil
+end
+
+-- capture_at_pc: like capture_game_tick but fires when the 68K fetches opcode at an arbitrary PC
+-- (p.pc, 24-bit). Snapshots regs + [addr,addr+len) AT entry to that PC. Shares cap state so poll()
+-- finishes it. nth selects the Nth hit (after arming). Reusable escape-entry capture primitive.
+handlers.capture_at_pc = function(p)
+  local pc = p.pc & 0xFFFFFF
+  if cap.tap_pc_at ~= pc then
+    if cap.tap_pc then cap.tap_pc:remove() end
+    local sp = space_of(":maincpu")
+    cap.tap_pc = sp:install_read_tap(pc, pc+1, "mcp_cap_pc", function(off, data, mask)
+      if cap.busy or not cap.arm or cap.mode ~= "pc" then return data end
+      local cpu = M.devices[":maincpu"]
+      -- The tap is pinned to [pc,pc+1]. MAME read taps fire at PREFETCH time, so cpu PC != pc even
+      -- for a real fetch-and-execute -> a PC==pc guard would reject everything. Instead disambiguate
+      -- by the stack: exp_ret pins to a specific caller ([SP]==ret, i.e. that jsr's pushed return);
+      -- exp_sp pins to a specific stack depth (e.g. post-return SP). Either filters shared callees.
+      local sp2 = cpu.spaces["program"]
+      if cap.exp_ret >= 0 then
+        local spv = cpu.state["SP"].value & 0xFFFFFF
+        local r = (sp2:read_u8(spv)<<24)|(sp2:read_u8(spv+1)<<16)|(sp2:read_u8(spv+2)<<8)|sp2:read_u8(spv+3)
+        if (r & 0xFFFFFF) ~= (cap.exp_ret & 0xFFFFFF) then return data end
+      end
+      if cap.exp_sp >= 0 and (cpu.state["SP"].value & 0xFFFFFF) ~= cap.exp_sp then return data end
+      cap.count = cap.count + 1
+      if cap.count < cap.nth then return data end
+      cap.busy = true
+      local regs = {}; for n, e in pairs(cpu.state) do regs[n] = e.value & 0xFFFFFFFF end
+      local sp2 = cpu.spaces["program"]; local hb = {}
+      for i = 0, cap.len - 1 do hb[i+1] = string.format("%02x", sp2:read_u8(cap.addr + i) & 0xFF) end
+      local s = M.screens:at(1)
+      cap.result = { registers = regs, hex = table.concat(hb), frame = (s and s:frame_number() or 0), pc = (cpu.state["PC"].value & 0xFFFFFF) }
+      cap.arm = false; cap.done = true; cap.busy = false; emu.pause()
+      return data
+    end)
+    cap.tap_pc_at = pc
+  end
+  cap.mode = "pc"; cap.pc = pc
+  cap.exp_ret = (p.exp_ret ~= nil) and p.exp_ret or -1
+  cap.exp_sp = (p.exp_sp ~= nil) and p.exp_sp or -1
   cap.addr = p.addr; cap.len = p.len; cap.nth = p.nth or 1; cap.count = 0; cap.done = false; cap.arm = true
   local s = M.screens:at(1); cap.deadline = (s and s:frame_number() or 0) + (p.maxFrames or 1200)
   emu.unpause()
