@@ -179,7 +179,7 @@ end
 -- regs + a memory region into the response. The lockstep regsA/wramA/wramB primitive. movem.l
 -- at $3A92 has already pushed 60 bytes when $F00000 is read, so entry a7 = captured a7 + 60
 -- (the client reconstructs). `busy` guards the in-tap region read (which re-touches $F00000).
-local cap = { arm=false, done=false, busy=false, count=0, nth=1, addr=0, len=0, tap=nil, result=nil, deadline=0, mode="tick", pc=0, tap_pc=nil, tap_pc_at=-1, exp_ret=-1, exp_sp=-1 }
+local cap = { arm=false, done=false, busy=false, count=0, nth=1, addr=0, len=0, tap=nil, result=nil, deadline=0, mode="tick", pc=0, tap_pc=nil, tap_pc_at=-1, exp_ret=-1, exp_sp=-1, exp_areg="", exp_aval=0 }
 handlers.capture_game_tick = function(p)
   if not cap.tap then
     local sp = space_of(":maincpu")
@@ -229,6 +229,12 @@ handlers.capture_at_pc = function(p)
         if (r & 0xFFFFFF) ~= (cap.exp_ret & 0xFFFFFF) then return data end
       end
       if cap.exp_sp >= 0 and (cpu.state["SP"].value & 0xFFFFFF) ~= cap.exp_sp then return data end
+      -- exp_areg/exp_aval: pin to a dispatch where a specific reg holds a value (e.g. the jsr(a1)
+      -- target a1==fn). Prefetch-robust at a CALL SITE: the reg is already loaded before the jsr.
+      if cap.exp_areg ~= "" then
+        local rv = cpu.state[cap.exp_areg]
+        if not rv or (rv.value & 0xFFFFFF) ~= (cap.exp_aval & 0xFFFFFF) then return data end
+      end
       cap.count = cap.count + 1
       if cap.count < cap.nth then return data end
       cap.busy = true
@@ -245,6 +251,8 @@ handlers.capture_at_pc = function(p)
   cap.mode = "pc"; cap.pc = pc
   cap.exp_ret = (p.exp_ret ~= nil) and p.exp_ret or -1
   cap.exp_sp = (p.exp_sp ~= nil) and p.exp_sp or -1
+  cap.exp_areg = (p.exp_areg ~= nil) and p.exp_areg or ""
+  cap.exp_aval = (p.exp_aval ~= nil) and p.exp_aval or 0
   cap.addr = p.addr; cap.len = p.len; cap.nth = p.nth or 1; cap.count = 0; cap.done = false; cap.arm = true
   local s = M.screens:at(1); cap.deadline = (s and s:frame_number() or 0) + (p.maxFrames or 1200)
   emu.unpause()
