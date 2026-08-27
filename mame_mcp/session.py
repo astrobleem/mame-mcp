@@ -37,6 +37,7 @@ class MameSession:
             (self.workdir / f).unlink(missing_ok=True)
         cmd = [self.mame, self.system, "-rompath", str(self.rompath),
                "-video", "none", "-sound", "none", "-nothrottle", "-skip_gameinfo",
+               "-debug", "-debugger", "none",
                "-autoboot_script", str(BRIDGE_LUA), "-autoboot_delay", "0",
                "-nvram_directory", str(self.workdir / "nvram"),
                "-cfg_directory", str(self.workdir / "cfg")]

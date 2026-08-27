@@ -11,9 +11,9 @@
 -- 0.287 snap). Handles the subset the bridge needs: objects, arrays, strings, ints, bool, null.
 local json = {}
 local function jesc(s)
-  return (s:gsub('[%c"\\]', function(c)
-    local m = {['"']='\\"', ['\\']='\\\\', ['\n']='\\n', ['\r']='\\r', ['\t']='\\t'}
-    return m[c] or string.format('\\u%04x', c:byte())
+  return (s:gsub('[%c"\\\\]', function(c)
+    local m = {['"']='\\\\"', ['\\\\']='\\\\\\\\', ['\n']='\\\\n', ['\r']='\\\\r', ['\t']='\\\\t'}
+    return m[c] or string.format('\\\\u%04x', c:byte())
   end))
 end
 local function jenc(v)
@@ -27,8 +27,7 @@ local function jenc(v)
     if n > 0 and #v == n then
       local p = {}; for i = 1, #v do p[i] = jenc(v[i]) end; return "[" .. table.concat(p, ",") .. "]"
     end
-    local p = {}; for k, val in pairs(v) do p[#p+1] = '"' .. jesc(tostring(k)) .. '":' .. jenc(val) end
-    return "{" .. table.concat(p, ",") .. "}"
+    local p = {}; for k, val in pairs(v) do p[#p+1] = '"' .. jesc(tostring(k)) .. '":' .. jenc(val) end; return "{" .. table.concat(p, ",") .. "}"
   end
   return "null"
 end
@@ -44,7 +43,7 @@ function json.parse(s)
       if c == '"' then pos = pos + 1; break
       elseif c == "\\" then
         local e = s:sub(pos + 1, pos + 1)
-        local m = {['"']='"', ["\\"]="\\", ["/"]="/", n="\n", t="\t", r="\r", b="\b", f="\f"}
+        local m = {['"']='"', ["\\"]='\\', ["/"]='/', n="\n", t="\t", r="\r", b="\b", f="\f"}
         if e == "u" then buf[#buf+1] = utf8.char(tonumber(s:sub(pos+2, pos+5), 16)); pos = pos + 6
         else buf[#buf+1] = m[e] or e; pos = pos + 2 end
       else buf[#buf+1] = c; pos = pos + 1 end
@@ -81,7 +80,6 @@ local M = manager.machine
 
 local function read_file(p) local f=io.open(p,"r"); if not f then return nil end local c=f:read("*a"); f:close(); return c end
 local function write_file(p,c) local f=io.open(p,"w"); if not f then return false end f:write(c); f:close(); return true end
--- atomic: write to a temp then rename, so the client never reads a partial response
 local function write_atomic(p,c) write_file(p..".tmp", c); os.remove(p); os.rename(p..".tmp", p) end
 local function ok(d) return { status="ok", result=d } end
 local function err(m) return { status="error", message=tostring(m) } end
@@ -158,9 +156,9 @@ handlers.list_inputs = function()
   return ok({ fields=names })
 end
 handlers.exec_lua = function(p)
-  local fn, e = load("return function(M, machine) " .. p.code .. " end")
+  local fn, e = load("local M, machine = ...; " .. p.code)
   if not fn then return err("compile: "..tostring(e)) end
-  local okc, res = pcall(fn(), M, M)
+  local okc, res = pcall(fn, M, M)
   if not okc then return err("run: "..tostring(res)) end
   return ok({ result = res })
 end
@@ -267,7 +265,218 @@ local function dispatch(req)
   return res   -- may be nil for deferred (run_frames)
 end
 
+---- debugger-based instruction stepping ----
+-- MAME debugger API (from src/emu/debug/debugcpu.cpp):
+--   cpu.debug:bpset(addr, cond) -> bp_number
+--   cpu.debug:bpclear([bp_number])
+--   cpu.debug:step(count)  -- async: sets m_stepsleft, calls set_execution_running()
+--   cpu.debug:go()         -- async: starts execution
+--   M.debugger.execution_state  -- "run" | "stop"
+--
+-- DESIGN: handlers set up step_ctx and return nil (deferred). poll_debug_job(),
+-- called from poll() every frame/periodic, observes execution_state transitions.
+--
+-- This mirrors plugins/gdbstub/init.lua's approach.
+
+local step_ctx = nil
+
+local function cpu_from_tag(tag)
+  return M.devices[tag or ":maincpu"]
+end
+
+local function read_regs(cpu)
+  local regs = {}
+  for name, entry in pairs(cpu.state) do regs[name] = entry.value & 0xFFFFFFFF end
+  return regs
+end
+
+local function read_memory(cpu, addr, len)
+  local sp = cpu.spaces["program"]
+  local t = {}
+  for i = 0, len-1 do t[i+1] = string.format("%02x", sp:read_u8(addr+i) & 0xFF) end
+  return table.concat(t)
+end
+
+local function mem_capture(cpu, mem)
+  local result = {}
+  if mem then
+    for _, m in ipairs(mem) do
+      local addr = m.addr
+      local len = m.len or 1
+      local key = len == 1 and string.format("%04X", addr) or string.format("%04X-%04X", addr, addr + len - 1)
+      result[key] = read_memory(cpu, addr, len)
+    end
+  end
+  return result
+end
+
+local function snapshot_debug_state(cpu, mem)
+  local regs = read_regs(cpu)
+  local pc = cpu.state["PC"].value & 0xFFFF
+  return {
+    pc = pc,
+    sp = regs.SP or 0,
+    af = regs.AF or 0,
+    bc = regs.BC or 0,
+    de = regs.DE or 0,
+    hl = regs.HL or 0,
+    ix = regs.IX or 0,
+    iy = regs.IY or 0,
+    iff1 = regs.IFF1 or 0,
+    iff2 = regs.IFF2 or 0,
+    im = regs.IM or 0,
+    registers = regs,
+    opcode = read_memory(cpu, pc, 8),
+    memory = mem_capture(cpu, mem),
+    execution_state = M.debugger.execution_state,
+    machine_paused = M.paused,
+  }
+end
+
+local function finalize_step(result, status)
+  status = status or "ok"
+  step_ctx = nil
+  write_atomic(RSP, json.stringify({ status = status, result = result }))
+end
+
+-- poll_debug_job: called every poll() to drive deferred debug operations
+local function poll_debug_job()
+  if not step_ctx then return false end
+  local ctx = step_ctx
+  local cpu = cpu_from_tag(ctx.cpu_tag)
+  local debugger = M.debugger
+
+  if ctx.phase == "waiting_for_step" then
+    if debugger.execution_state ~= "stop" then return false end
+    local snapshot = snapshot_debug_state(cpu, ctx.memory)
+    finalize_step({ pc = snapshot.pc, registers = snapshot.registers, memory = snapshot.memory, steps_taken = ctx.steps })
+    return true
+
+  elseif ctx.phase == "waiting_for_and_step" then
+    if debugger.execution_state ~= "stop" then return false end
+    local after = snapshot_debug_state(cpu, ctx.memory)
+    finalize_step({ hit = true, before = ctx.before, after = after, steps_taken = 1 })
+    return true
+
+  elseif ctx.phase == "waiting_for_breakpoint" then
+    if debugger.execution_state ~= "stop" then return false end
+    local pc = cpu.state["PC"].value & 0xFFFF
+    if ctx.target_pc and pc ~= ctx.target_pc then
+      cpu.debug:go()
+      return false
+    end
+    pcall(function() cpu.debug:bpclear(ctx.bp_index) end)
+    ctx.bp_index = nil
+    ctx.before = snapshot_debug_state(cpu, ctx.memory)
+    if ctx.simple then
+      finalize_step({ pc = pc, before = ctx.before, hit = true })
+    else
+      ctx.phase = "waiting_for_and_step"
+      ctx.steps = 0
+      cpu.debug:step(1)
+    end
+    return true
+  end
+  return false
+end
+
+-- Handler: run until PC, step one instruction, capture before/after
+handlers.mame_run_until_pc_and_step = function(p)
+  if step_ctx then return err("debug operation already active") end
+  if cap.arm or cap.done or run_target ~= nil then return err("another deferred operation is active") end
+
+  local debugger = M.debugger
+  local cpu_tag = p.cpu_tag or ":maincpu"
+  local cpu = cpu_from_tag(cpu_tag)
+
+  if not debugger then return err("debugger not enabled") end
+  if not cpu then return err("CPU not found: " .. cpu_tag) end
+  if not cpu.debug then return err("device has no debugger interface") end
+
+  if M.paused then emu.unpause() end
+
+  local ok, bp_index = pcall(function() return cpu.debug:bpset(p.target_pc & 0xFFFF, "", "") end)
+  if not ok or not bp_index then return err("bpset failed: " .. tostring(bp_index)) end
+
+  step_ctx = {
+    phase = "waiting_for_breakpoint",
+    cpu_tag = cpu_tag,
+    target_pc = p.target_pc & 0xFFFF,
+    memory = p.memory or {},
+    simple = false,
+    bp_index = bp_index,
+    before = nil,
+    steps = 0,
+  }
+
+  cpu.debug:go()
+  return nil
+end
+
+-- Handler: run until PC, capture state
+handlers.mame_run_until_pc = function(p)
+  if step_ctx then return err("debug operation already active") end
+  if cap.arm or cap.done or run_target ~= nil then return err("another deferred operation is active") end
+
+  local debugger = M.debugger
+  local cpu_tag = p.cpu_tag or ":maincpu"
+  local cpu = cpu_from_tag(cpu_tag)
+
+  if not debugger then return err("debugger not enabled") end
+  if not cpu then return err("CPU not found: " .. cpu_tag) end
+  if not cpu.debug then return err("device has no debugger interface") end
+
+  if M.paused then emu.unpause() end
+
+  local ok, bp_index = pcall(function() return cpu.debug:bpset(p.address & 0xFFFF, "", "") end)
+  if not ok or not bp_index then return err("bpset failed: " .. tostring(bp_index)) end
+
+  step_ctx = {
+    phase = "waiting_for_breakpoint",
+    cpu_tag = cpu_tag,
+    target_pc = p.address & 0xFFFF,
+    memory = p.memory or {},
+    simple = true,
+    bp_index = bp_index,
+    before = nil,
+    steps = 0,
+  }
+
+  cpu.debug:go()
+  return nil
+end
+
+-- Handler: step N instructions
+handlers.mame_step_instruction = function(p)
+  if step_ctx then return err("debug operation already active") end
+  if cap.arm or cap.done or run_target ~= nil then return err("another deferred operation is active") end
+
+  local debugger = M.debugger
+  local cpu_tag = p.cpu_tag or ":maincpu"
+  local cpu = cpu_from_tag(cpu_tag)
+
+  if not debugger then return err("debugger not enabled") end
+  if not cpu then return err("CPU not found: " .. cpu_tag) end
+  if not cpu.debug then return err("device has no debugger interface") end
+
+  if M.paused then emu.unpause() end
+
+  step_ctx = {
+    phase = "waiting_for_step",
+    cpu_tag = cpu_tag,
+    memory = p.memory or {},
+    steps = p.count or 1,
+  }
+
+  cpu.debug:step(p.count or 1)
+  return nil
+end
+
 local function poll()
+  -- drive deferred debug job (mame_run_until_pc, mame_run_until_pc_and_step, mame_step_instruction)
+  if poll_debug_job() then
+    return
+  end
   -- finish a deferred capture_game_tick
   if cap.arm or cap.done then
     if cap.done then
