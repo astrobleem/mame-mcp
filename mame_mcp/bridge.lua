@@ -365,6 +365,15 @@ local function poll_debug_job()
       cpu.debug:go()
       return false
     end
+    -- Disambiguation: if caller specified expected_sp, verify we hit the
+    -- right call site (e.g. $8000 can be reached from multiple paths).
+    if ctx.expected_sp then
+      local sp = cpu.state["SP"].value & 0xFFFF
+      if sp ~= ctx.expected_sp then
+        cpu.debug:go()
+        return false
+      end
+    end
     pcall(function() cpu.debug:bpclear(ctx.bp_index) end)
     ctx.bp_index = nil
     ctx.before = snapshot_debug_state(cpu, ctx.memory)
@@ -405,6 +414,79 @@ handlers.mame_run_until_pc_and_step = function(p)
     memory = p.memory or {},
     simple = false,
     bp_index = bp_index,
+    expected_sp = p.expected_sp,
+    before = nil,
+    steps = 0,
+  }
+
+  cpu.debug:go()
+  return nil
+end
+
+-- Handler: cold reset -> run until PC, step one, capture before/after.
+-- ATOMIC: installs breakpoint BEFORE reset so -nothrottle MAME cannot race
+-- past the target between separate install/reset/go commands.
+handlers.mame_run_from_reset_until_pc_and_step = function(p)
+  if step_ctx then return err("debug operation already active") end
+  if cap.arm or cap.done or run_target ~= nil then return err("another deferred operation is active") end
+
+  local debugger = M.debugger
+  local cpu_tag = p.cpu_tag or ":maincpu"
+  local cpu = cpu_from_tag(cpu_tag)
+
+  if not debugger then return err("debugger not enabled") end
+  if not cpu then return err("CPU not found: " .. cpu_tag) end
+  if not cpu.debug then return err("device has no debugger interface") end
+
+  -- Install breakpoint BEFORE reset so it survives the reset
+  local ok, bp_index = pcall(function() return cpu.debug:bpset(p.target_pc & 0xFFFF, "", "") end)
+  if not ok or not bp_index then return err("bpset failed: " .. tostring(bp_index)) end
+
+  -- Soft reset: CPU restarts from reset vector with breakpoint armed
+  M:soft_reset()
+
+  step_ctx = {
+    phase = "waiting_for_breakpoint",
+    cpu_tag = cpu_tag,
+    target_pc = p.target_pc & 0xFFFF,
+    memory = p.memory or {},
+    simple = false,
+    bp_index = bp_index,
+    expected_sp = p.expected_sp,
+    before = nil,
+    steps = 0,
+  }
+
+  cpu.debug:go()
+  return nil
+end
+
+-- Handler: cold reset -> run until PC, capture state
+handlers.mame_run_from_reset_until_pc = function(p)
+  if step_ctx then return err("debug operation already active") end
+  if cap.arm or cap.done or run_target ~= nil then return err("another deferred operation is active") end
+
+  local debugger = M.debugger
+  local cpu_tag = p.cpu_tag or ":maincpu"
+  local cpu = cpu_from_tag(cpu_tag)
+
+  if not debugger then return err("debugger not enabled") end
+  if not cpu then return err("CPU not found: " .. cpu_tag) end
+  if not cpu.debug then return err("device has no debugger interface") end
+
+  local ok, bp_index = pcall(function() return cpu.debug:bpset(p.address & 0xFFFF, "", "") end)
+  if not ok or not bp_index then return err("bpset failed: " .. tostring(bp_index)) end
+
+  M:soft_reset()
+
+  step_ctx = {
+    phase = "waiting_for_breakpoint",
+    cpu_tag = cpu_tag,
+    target_pc = p.address & 0xFFFF,
+    memory = p.memory or {},
+    simple = true,
+    bp_index = bp_index,
+    expected_sp = p.expected_sp,
     before = nil,
     steps = 0,
   }
