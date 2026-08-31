@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -28,6 +29,7 @@ class MameSession:
         self.state_directory = state_directory
         self.extra_args = extra_args or []
         self.proc = None
+        self._launch_log = None
         self._seq = 0
 
     # ---- lifecycle ----
@@ -45,15 +47,25 @@ class MameSession:
             cmd += ["-state_directory", str(self.state_directory)]
         cmd += self.extra_args
         env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
+        snap_libs = [str(p) for p in Path("/snap/mame").glob("*/usr/lib/x86_64-linux-gnu")]
+        current_ld = env.get("LD_LIBRARY_PATH", "")
+        if snap_libs:
+            required_ld = ":".join(["/usr/lib/x86_64-linux-gnu", *snap_libs])
+            env["LD_LIBRARY_PATH"] = required_ld if not current_ld else current_ld + ":" + required_ld
+        elif not current_ld:
+            env["LD_LIBRARY_PATH"] = "/usr/lib/x86_64-linux-gnu"
+        self._launch_log = tempfile.TemporaryFile(mode="w+b")
         self.proc = subprocess.Popen(cmd, cwd=str(self.workdir), env=env,
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                     stdout=self._launch_log, stderr=self._launch_log)
         ready = self.workdir / "mame_bridge.ready"
         t0 = time.time()
         while time.time() - t0 < boot_wait:
             if ready.exists():
                 return self
             if self.proc.poll() is not None:
-                raise MameError(f"MAME exited during boot (code {self.proc.returncode})")
+                self._launch_log.seek(0)
+                tail = self._launch_log.read().decode(errors="replace")[-4000:]
+                raise MameError(f"MAME exited during boot (code {self.proc.returncode})\n{tail}")
             time.sleep(0.05)
         raise MameError("bridge did not become ready within %.0fs" % boot_wait)
 

@@ -374,12 +374,35 @@ local function poll_debug_job()
         return false
       end
     end
+    if ctx.expected_regs then
+      for name, expected in pairs(ctx.expected_regs) do
+        local entry = cpu.state[name]
+        if not entry or (entry.value & 0xFFFFFFFF) ~= (expected & 0xFFFFFFFF) then
+          cpu.debug:go()
+          return false
+        end
+      end
+    end
     pcall(function() cpu.debug:bpclear(ctx.bp_index) end)
     ctx.bp_index = nil
-    ctx.before = snapshot_debug_state(cpu, ctx.memory)
     if ctx.simple then
+      ctx.before = snapshot_debug_state(cpu, ctx.memory)
       finalize_step({ pc = pc, before = ctx.before, hit = true })
     else
+      if ctx.pre_step_regs then
+        for name, value in pairs(ctx.pre_step_regs) do
+          local entry = cpu.state[name]
+          if not entry then return err("no register " .. tostring(name)) end
+          entry.value = value
+        end
+        for name, value in pairs(ctx.pre_step_regs) do
+          local entry = cpu.state[name]
+          if (entry.value & 0xFFFFFFFF) ~= (value & 0xFFFFFFFF) then
+            return err("pre_step_regs write failed for " .. tostring(name))
+          end
+        end
+      end
+      ctx.before = snapshot_debug_state(cpu, ctx.memory)
       ctx.phase = "waiting_for_and_step"
       ctx.steps = 0
       cpu.debug:step(1)
@@ -415,6 +438,8 @@ handlers.mame_run_until_pc_and_step = function(p)
     simple = false,
     bp_index = bp_index,
     expected_sp = p.expected_sp,
+    expected_regs = p.expected_regs,
+    pre_step_regs = p.pre_step_regs,
     before = nil,
     steps = 0,
   }
@@ -453,6 +478,8 @@ handlers.mame_run_from_reset_until_pc_and_step = function(p)
     simple = false,
     bp_index = bp_index,
     expected_sp = p.expected_sp,
+    expected_regs = p.expected_regs,
+    pre_step_regs = p.pre_step_regs,
     before = nil,
     steps = 0,
   }
@@ -487,6 +514,8 @@ handlers.mame_run_from_reset_until_pc = function(p)
     simple = true,
     bp_index = bp_index,
     expected_sp = p.expected_sp,
+    expected_regs = p.expected_regs,
+    pre_step_regs = p.pre_step_regs,
     before = nil,
     steps = 0,
   }
@@ -520,6 +549,8 @@ handlers.mame_run_until_pc = function(p)
     memory = p.memory or {},
     simple = true,
     bp_index = bp_index,
+    expected_sp = p.expected_sp,
+    expected_regs = p.expected_regs,
     before = nil,
     steps = 0,
   }
