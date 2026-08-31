@@ -339,6 +339,13 @@ local function finalize_step(result, status)
   write_atomic(RSP, json.stringify({ status = status, result = result }))
 end
 
+local function start_chained_step(ctx, cpu)
+  ctx.phase = "waiting_for_chain_step"
+  ctx.remaining = ctx.count
+  ctx.rows = { snapshot_debug_state(cpu, ctx.memory) }
+  cpu.debug:step(1)
+end
+
 -- poll_debug_job: called every poll() to drive deferred debug operations
 local function poll_debug_job()
   if not step_ctx then return false end
@@ -346,7 +353,48 @@ local function poll_debug_job()
   local cpu = cpu_from_tag(ctx.cpu_tag)
   local debugger = M.debugger
 
-  if ctx.phase == "waiting_for_step" then
+  if ctx.phase == "waiting_for_chain_breakpoint" then
+    if debugger.execution_state ~= "stop" then return false end
+    local pc = cpu.state["PC"].value & 0xFFFF
+    if pc ~= ctx.target_pc then
+      cpu.debug:go()
+      return false
+    end
+    if ctx.expected_sp then
+      local sp = cpu.state["SP"].value & 0xFFFF
+      if sp ~= ctx.expected_sp then
+        cpu.debug:go()
+        return false
+      end
+    end
+    if ctx.expected_regs then
+      for name, expected in pairs(ctx.expected_regs) do
+        local entry = cpu.state[name]
+        if not entry or (entry.value & 0xFFFFFFFF) ~= (expected & 0xFFFFFFFF) then
+          cpu.debug:go()
+          return false
+        end
+      end
+    end
+    pcall(function() cpu.debug:bpclear(ctx.bp_index) end)
+    ctx.bp_index = nil
+    start_chained_step(ctx, cpu)
+    return true
+
+  elseif ctx.phase == "waiting_for_chain_step" then
+    if debugger.execution_state ~= "stop" then return false end
+    local snapshot = snapshot_debug_state(cpu, ctx.memory)
+    table.insert(ctx.rows, snapshot)
+    ctx.remaining = ctx.remaining - 1
+    if ctx.remaining <= 0 then
+      finalize_step({ hit = true, rows = ctx.rows, steps_taken = ctx.count })
+    else
+      -- Keep the same debugger stop lifecycle.  Do not go/unpause here.
+      cpu.debug:step(1)
+    end
+    return true
+
+  elseif ctx.phase == "waiting_for_step" then
     if debugger.execution_state ~= "stop" then return false end
     local snapshot = snapshot_debug_state(cpu, ctx.memory)
     finalize_step({ pc = snapshot.pc, registers = snapshot.registers, memory = snapshot.memory, steps_taken = ctx.steps })
@@ -484,6 +532,43 @@ handlers.mame_run_from_reset_until_pc_and_step = function(p)
     steps = 0,
   }
 
+  cpu.debug:go()
+  return nil
+end
+
+-- Handler: cold reset -> run until PC, capture a bounded chained trace.
+-- The breakpoint is installed before reset; after the hit, every instruction is
+-- stepped from the same debugger stop without a client round-trip or go().
+handlers.mame_run_from_reset_until_pc_and_trace = function(p)
+  if step_ctx then return err("debug operation already active") end
+  if cap.arm or cap.done or run_target ~= nil then return err("another deferred operation is active") end
+
+  local count = p.count or 1
+  if type(count) ~= "number" or count < 1 or count > 512 or count ~= math.floor(count) then
+    return err("count must be an integer in [1,512]")
+  end
+  local debugger = M.debugger
+  local cpu_tag = p.cpu_tag or ":maincpu"
+  local cpu = cpu_from_tag(cpu_tag)
+  if not debugger then return err("debugger not enabled") end
+  if not cpu then return err("CPU not found: " .. cpu_tag) end
+  if not cpu.debug then return err("device has no debugger interface") end
+
+  local ok, bp_index = pcall(function() return cpu.debug:bpset(p.target_pc & 0xFFFF, "", "") end)
+  if not ok or not bp_index then return err("bpset failed: " .. tostring(bp_index)) end
+  M:soft_reset()
+  step_ctx = {
+    phase = "waiting_for_chain_breakpoint",
+    cpu_tag = cpu_tag,
+    target_pc = p.target_pc & 0xFFFF,
+    memory = p.memory or {},
+    bp_index = bp_index,
+    expected_sp = p.expected_sp,
+    expected_regs = p.expected_regs,
+    count = count,
+    rows = nil,
+    remaining = nil,
+  }
   cpu.debug:go()
   return nil
 end
