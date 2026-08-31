@@ -77,6 +77,9 @@ class MameSession:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self.proc = None
+        if self._launch_log is not None:
+            self._launch_log.close()
+            self._launch_log = None
 
     def __enter__(self):
         return self.launch()
