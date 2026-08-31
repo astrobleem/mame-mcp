@@ -86,6 +86,16 @@ def mame_capture_game_tick(args):
         nth=int(args.get("nth", 1)), timeout=float(args.get("timeout", 60))))
 
 
+def mame_run_from_reset_until_pc_and_trace(args):
+    memory = [{"addr": int(item["addr"]), "len": int(item.get("len", 1))}
+              for item in args.get("memory", [])]
+    return _wrap(lambda: _require().mame_run_from_reset_until_pc_and_trace(
+        target_pc=int(args["targetPc"]), count=int(args.get("count", 1)), memory=memory,
+        expected_sp=int(args["expectedSp"]) if "expectedSp" in args else None,
+        expected_regs={str(k): int(v) for k, v in args.get("expectedRegs", {}).items()},
+        cpu_tag=args.get("cpuTag", ":maincpu"), timeout=300.0))
+
+
 def mame_drive_to_gameplay(args):
     return _wrap(lambda: _require().drive_to_gameplay(
         coin=args.get("coin", "Coin 1"), start=args.get("start", "1 Player Start"),
@@ -107,6 +117,7 @@ LIVE_HANDLERS = {
     "mame_write_memory": mame_write_memory,
     "mame_send_input": mame_send_input,
     "mame_capture_game_tick": mame_capture_game_tick,
+    "mame_run_from_reset_until_pc_and_trace": mame_run_from_reset_until_pc_and_trace,
     "mame_drive_to_gameplay": mame_drive_to_gameplay,
     "mame_exec_lua_live": mame_exec_lua_live,
 }

@@ -20,7 +20,12 @@ def test_chained_trace_owns_one_deferred_debugger_lifecycle():
     assert 'emu.unpause()' not in chain
 
 
-def test_existing_one_shot_handlers_remain_present():
+def test_public_catalog_exposes_chained_trace():
+    from mame_mcp.tools import tool_descriptions
+
+    names = {item["name"] for item in tool_descriptions()}
+    assert "mame_run_from_reset_until_pc_and_trace" in names
+
     text = BRIDGE.read_text()
     assert 'handlers.mame_run_from_reset_until_pc_and_step = function(p)' in text
     assert 'handlers.mame_step_instruction = function(p)' in text
