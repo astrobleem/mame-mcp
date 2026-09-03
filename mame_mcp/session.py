@@ -141,6 +141,23 @@ class MameSession:
                         count=count, memory=memory or [], expected_sp=expected_sp,
                         expected_regs=expected_regs, cpu_tag=cpu_tag, timeout=timeout)
 
+    def mame_run_until_pc_and_step(self, target_pc, memory=None, expected_sp=None,
+                                   expected_regs=None, pre_step_regs=None,
+                                   cpu_tag=":maincpu", timeout=300.0):
+        return self.cmd("mame_run_until_pc_and_step", target_pc=target_pc,
+                        memory=memory or [], expected_sp=expected_sp,
+                        expected_regs=expected_regs, pre_step_regs=pre_step_regs,
+                        cpu_tag=cpu_tag, timeout=timeout)
+
+    def mame_run_from_reset_until_pc_and_step(self, target_pc, memory=None,
+                                              expected_sp=None, expected_regs=None,
+                                              pre_step_regs=None, cpu_tag=":maincpu",
+                                              timeout=300.0):
+        return self.cmd("mame_run_from_reset_until_pc_and_step", target_pc=target_pc,
+                        memory=memory or [], expected_sp=expected_sp,
+                        expected_regs=expected_regs, pre_step_regs=pre_step_regs,
+                        cpu_tag=cpu_tag, timeout=timeout)
+
     def drive_to_gameplay(self, coin="Coin 1", start="1 Player Start", idle_lo=0x818,
                           idle_hi=0x81C, boot_steps=120, step=10, settle=24, credits=1):
         """BOOT-AWARE drive to a running game. Waits for the $0818 main-loop idle (boot done,

@@ -96,6 +96,26 @@ def mame_run_from_reset_until_pc_and_trace(args):
         cpu_tag=args.get("cpuTag", ":maincpu"), timeout=300.0))
 
 
+def _step_params(args):
+    return {
+        "target_pc": int(args["targetPc"]),
+        "memory": [{"addr": int(item["addr"]), "len": int(item.get("len", 1))}
+                   for item in args.get("memory", [])],
+        "expected_sp": int(args["expectedSp"]) if "expectedSp" in args else None,
+        "expected_regs": {str(k): int(v) for k, v in args.get("expectedRegs", {}).items()},
+        "pre_step_regs": {str(k): int(v) for k, v in args.get("preStepRegs", {}).items()},
+        "cpu_tag": args.get("cpuTag", ":maincpu"),
+    }
+
+
+def mame_run_until_pc_and_step(args):
+    return _wrap(lambda: _require().mame_run_until_pc_and_step(**_step_params(args)))
+
+
+def mame_run_from_reset_until_pc_and_step(args):
+    return _wrap(lambda: _require().mame_run_from_reset_until_pc_and_step(**_step_params(args)))
+
+
 def mame_drive_to_gameplay(args):
     return _wrap(lambda: _require().drive_to_gameplay(
         coin=args.get("coin", "Coin 1"), start=args.get("start", "1 Player Start"),
@@ -118,6 +138,8 @@ LIVE_HANDLERS = {
     "mame_send_input": mame_send_input,
     "mame_capture_game_tick": mame_capture_game_tick,
     "mame_run_from_reset_until_pc_and_trace": mame_run_from_reset_until_pc_and_trace,
+    "mame_run_until_pc_and_step": mame_run_until_pc_and_step,
+    "mame_run_from_reset_until_pc_and_step": mame_run_from_reset_until_pc_and_step,
     "mame_drive_to_gameplay": mame_drive_to_gameplay,
     "mame_exec_lua_live": mame_exec_lua_live,
 }

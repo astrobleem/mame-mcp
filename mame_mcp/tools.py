@@ -22,6 +22,17 @@ COMMON_MACHINE_PROPS: dict[str, Any] = {
     "rompath": {"type": "string", "description": "ROM search path. Defaults to MAME_ROMPATH."},
 }
 
+SINGLE_STEP_PROPS: dict[str, Any] = {
+    "targetPc": {"type": "integer", "description": "CPU program counter at which to stop."},
+    "memory": {"type": "array", "items": {"type": "object", "properties": {
+        "addr": {"type": "integer"}, "len": {"type": "integer"}},
+        "required": ["addr"], "additionalProperties": False}},
+    "expectedSp": {"type": "integer"},
+    "expectedRegs": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "preStepRegs": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "cpuTag": {"type": "string", "default": ":maincpu"},
+}
+
 
 TOOLS: "OrderedDict[str, dict[str, Any]]" = OrderedDict(
     [
@@ -262,6 +273,10 @@ TOOLS: "OrderedDict[str, dict[str, Any]]" = OrderedDict(
             "schema": {"type": "object", "properties": {"field": {"type": "string"}, "value": {"type": "integer"}}, "required": ["field", "value"], "additionalProperties": False}}),
         ("mame_capture_game_tick", {"category": "live", "summary": "Run to the Nth GAME_TICK ($3A92) and snapshot regs + a memory region AT the prologue read (lockstep regsA/wramA primitive; entry a7 = SP+60).",
             "schema": {"type": "object", "properties": {"addr": {"type": "integer"}, "len": {"type": "integer"}, "nth": {"type": "integer", "default": 1}, "timeout": {"type": "number", "default": 60}}, "required": ["addr", "len"], "additionalProperties": False}}),
+        ("mame_run_until_pc_and_step", {"category": "live", "summary": "Run to a filtered PC, then capture exactly one instruction before and after execution.",
+            "schema": {"type": "object", "properties": SINGLE_STEP_PROPS, "required": ["targetPc"], "additionalProperties": False}}),
+        ("mame_run_from_reset_until_pc_and_step", {"category": "live", "summary": "Reset organically, run to a filtered PC, then capture exactly one instruction before and after execution.",
+            "schema": {"type": "object", "properties": SINGLE_STEP_PROPS, "required": ["targetPc"], "additionalProperties": False}}),
         ("mame_run_from_reset_until_pc_and_trace", {"category": "live", "summary": "Reset organically, stop at a filtered PC, then return a bounded same-lifecycle instruction-boundary transcript with registers and requested memory.",
             "schema": {"type": "object", "properties": {"targetPc": {"type": "integer"}, "count": {"type": "integer", "minimum": 1, "maximum": 512, "default": 1}, "memory": {"type": "array", "items": {"type": "object", "properties": {"addr": {"type": "integer"}, "len": {"type": "integer"}}, "required": ["addr"], "additionalProperties": False}}, "expectedSp": {"type": "integer"}, "expectedRegs": {"type": "object", "additionalProperties": {"type": "integer"}}, "cpuTag": {"type": "string", "default": ":maincpu"}}, "required": ["targetPc"], "additionalProperties": False}}),
         ("mame_drive_to_gameplay", {"category": "live", "summary": "BOOT-AWARE drive to a running game: wait for the $0818 idle (boot done), inject clean coin/start EDGES, confirm GAME_TICK. Replay-robust where a fixed-frame .inp desyncs (the C-Chip boot handshake isn't bit-reproducible).",
