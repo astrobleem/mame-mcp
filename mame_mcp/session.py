@@ -127,6 +127,18 @@ class MameSession:
     def set_reg(self, reg, value, device=":maincpu"): return self.cmd("set_reg", reg=reg, value=value, device=device)
     def exec_lua(self, code): return self.cmd("exec_lua", code=code)["result"]
 
+    def trace_pc_events_start(self, pcs, memory=None, capacity=4096, stack_bytes=0,
+                              cpu_tag=":maincpu", deadline=0):
+        return self.cmd("mame_trace_pc_events_start", pcs=[int(pc) for pc in pcs],
+                        memory=memory or [], capacity=int(capacity), stack_bytes=int(stack_bytes),
+                        cpu_tag=cpu_tag, deadline=int(deadline))
+
+    def trace_pc_events_status(self):
+        return self.cmd("mame_trace_pc_events_status")
+
+    def trace_pc_events_stop(self):
+        return self.cmd("mame_trace_pc_events_stop")
+
     def read_block(self, addr, length, space=":maincpu", timeout=30.0):
         return bytes.fromhex(self.cmd("read_block", addr=addr, len=length, space=space, timeout=timeout)["hex"])
 

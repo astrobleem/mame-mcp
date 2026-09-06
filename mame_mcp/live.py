@@ -62,6 +62,23 @@ def mame_send_input(args): return _wrap(lambda: _require().send_input(args["fiel
 def mame_exec_lua_live(args): return {"result": _wrap(lambda: _require().exec_lua(args["code"]))}
 
 
+def mame_trace_pc_events_start(args):
+    memory = [{"addr": int(item["addr"]), "len": int(item.get("len", 1))}
+              for item in args.get("memory", [])]
+    return _wrap(lambda: _require().trace_pc_events_start(
+        pcs=[int(pc) for pc in args["pcs"]], memory=memory,
+        capacity=int(args.get("capacity", 4096)), stack_bytes=int(args.get("stackBytes", 0)),
+        cpu_tag=args.get("cpuTag", ":maincpu"), deadline=int(args.get("deadline", 0))))
+
+
+def mame_trace_pc_events_status(args):
+    return _wrap(lambda: _require().trace_pc_events_status())
+
+
+def mame_trace_pc_events_stop(args):
+    return _wrap(lambda: _require().trace_pc_events_stop())
+
+
 def mame_get_regs(args):
     return {"registers": _wrap(lambda: _require().get_regs(args.get("device", ":maincpu")))}
 
@@ -142,4 +159,7 @@ LIVE_HANDLERS = {
     "mame_run_from_reset_until_pc_and_step": mame_run_from_reset_until_pc_and_step,
     "mame_drive_to_gameplay": mame_drive_to_gameplay,
     "mame_exec_lua_live": mame_exec_lua_live,
+    "mame_trace_pc_events_start": mame_trace_pc_events_start,
+    "mame_trace_pc_events_status": mame_trace_pc_events_status,
+    "mame_trace_pc_events_stop": mame_trace_pc_events_stop,
 }

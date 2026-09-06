@@ -87,11 +87,16 @@ local function err(m) return { status="error", message=tostring(m) } end
 local function maincpu() return M.devices[":maincpu"] end
 local function space_of(tag) local d=M.devices[tag or ":maincpu"]; return d and d.spaces["program"] or nil end
 
+local sparse_ctx = nil
+local sparse_last = nil
 local handlers = {}
 handlers.ping = function() return ok({ pong=true, gamename=emu.gamename() }) end
 handlers.status = function()
   local s = M.screens:at(1)
-  return ok({ system=emu.gamename(), paused=M.paused, frame=(s and s:frame_number() or 0) })
+  local tr = sparse_ctx
+  return ok({ system=emu.gamename(), paused=M.paused, frame=(s and s:frame_number() or 0),
+    tracer_active=tr ~= nil, tracer_events=tr and #tr.events or 0,
+    tracer_overflow=tr and tr.overflow or 0 })
 end
 handlers.pause = function() emu.pause(); return ok({ paused=true }) end
 handlers.resume = function() emu.unpause(); return ok({ paused=false }) end
@@ -331,6 +336,51 @@ local function snapshot_debug_state(cpu, mem)
     execution_state = M.debugger.execution_state,
     machine_paused = M.paused,
   }
+end
+
+local function sparse_cleanup(ctx)
+  local cpu = cpu_from_tag(ctx.cpu_tag)
+  if cpu and cpu.debug then
+    for _, bp in ipairs(ctx.breakpoints) do pcall(function() cpu.debug:bpclear(bp) end) end
+  end
+  if sparse_ctx == ctx then sparse_ctx = nil end
+  sparse_last = ctx
+end
+
+handlers.mame_trace_pc_events_start = function(p)
+  if sparse_ctx then return err("sparse tracer already active") end
+  if step_ctx or cap.arm or cap.done or run_target ~= nil then return err("another deferred operation is active") end
+  local pcs, capacity = p.pcs or {}, p.capacity or 4096
+  if type(pcs) ~= "table" or #pcs < 1 or #pcs > 32 then return err("pcs must contain 1..32 addresses") end
+  if type(capacity) ~= "number" or capacity < 1 or capacity > 10000 or capacity ~= math.floor(capacity) then return err("capacity must be an integer in [1,10000]") end
+  local cpu_tag = p.cpu_tag or ":maincpu"; local cpu = cpu_from_tag(cpu_tag)
+  if not cpu or not cpu.debug then return err("CPU not found or debugger unavailable: " .. cpu_tag) end
+  local ctx = { cpu_tag=cpu_tag, by_pc={}, breakpoints={}, events={}, capacity=capacity, overflow=0, memory=p.memory or {}, stack_bytes=p.stack_bytes or 0, deadline=p.deadline or 0 }
+  for _, raw_pc in ipairs(pcs) do
+    local pc = raw_pc & 0xFFFF
+    if not ctx.by_pc[pc] then
+      local okc, bp = pcall(function() return cpu.debug:bpset(pc, "", "") end)
+      if not okc or not bp then sparse_cleanup(ctx); return err("bpset failed: " .. tostring(bp)) end
+      ctx.by_pc[pc]=true; ctx.breakpoints[#ctx.breakpoints+1]=bp
+    end
+  end
+  sparse_last = nil; sparse_ctx = ctx
+  if M.paused then emu.unpause() end
+  cpu.debug:go()
+  return ok({ active=true, pcs=pcs, capacity=capacity, events=0, overflow=0 })
+end
+
+handlers.mame_trace_pc_events_status = function()
+  local ctx=sparse_ctx or sparse_last
+  if not ctx then return ok({ active=false, events={}, count=0, overflow=0 }) end
+  return ok({ active=sparse_ctx ~= nil, count=#ctx.events, overflow=ctx.overflow, capacity=ctx.capacity, deadline=ctx.deadline, last=ctx.events[#ctx.events], events=ctx.events })
+end
+
+handlers.mame_trace_pc_events_stop = function()
+  local ctx=sparse_ctx or sparse_last
+  if not ctx then return ok({ active=false, events={}, count=0, overflow=0 }) end
+  if sparse_ctx then sparse_cleanup(ctx); pcall(function() emu.pause() end) end
+  return ok({ active=false, count=#ctx.events, overflow=ctx.overflow, events=ctx.events })
 end
 
 local function finalize_step(result, status)
@@ -671,6 +721,30 @@ handlers.mame_step_instruction = function(p)
 end
 
 local function poll()
+  -- Sparse PC tracer owns only its breakpoint stops; unrelated manual pauses
+  -- are left stopped and do not get resumed by this observer.
+  if sparse_ctx then
+    local ctx=sparse_ctx; local cpu=cpu_from_tag(ctx.cpu_tag)
+    if M.debugger.execution_state == "stop" then
+      local pc=cpu.state["PC"].value & 0xFFFF
+      if ctx.by_pc[pc] then
+        if #ctx.events < ctx.capacity then
+          local ev=snapshot_debug_state(cpu, ctx.memory)
+          ev.event_sequence=#ctx.events+1
+          ev.event_name=string.format("pc_%04X", pc)
+          if ctx.stack_bytes > 0 then ev.stack=read_memory(cpu, ev.sp, math.min(ctx.stack_bytes, 64)) end
+          ctx.events[#ctx.events+1]=ev
+        else
+          ctx.overflow=ctx.overflow+1
+        end
+        if ctx.overflow > 0 then
+          sparse_cleanup(ctx); pcall(function() emu.pause() end); return
+        end
+        cpu.debug:go()
+      end
+    end
+    -- Continue below so status/stop commands remain serviceable while armed.
+  end
   -- drive deferred debug job (mame_run_until_pc, mame_run_until_pc_and_step, mame_step_instruction)
   if poll_debug_job() then
     return
