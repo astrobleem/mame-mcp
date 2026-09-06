@@ -340,8 +340,12 @@ end
 
 local function sparse_cleanup(ctx)
   local cpu = cpu_from_tag(ctx.cpu_tag)
+  ctx.cleanup_errors = 0
   if cpu and cpu.debug then
-    for _, bp in ipairs(ctx.breakpoints) do pcall(function() cpu.debug:bpclear(bp) end) end
+    for _, bp in ipairs(ctx.breakpoints) do
+      local okc = pcall(function() cpu.debug:bpclear(bp) end)
+      if not okc then ctx.cleanup_errors=ctx.cleanup_errors+1 end
+    end
   end
   if sparse_ctx == ctx then sparse_ctx = nil end
   sparse_last = ctx
@@ -353,17 +357,33 @@ handlers.mame_trace_pc_events_start = function(p)
   local pcs, capacity = p.pcs or {}, p.capacity or 4096
   if type(pcs) ~= "table" or #pcs < 1 or #pcs > 32 then return err("pcs must contain 1..32 addresses") end
   if type(capacity) ~= "number" or capacity < 1 or capacity > 10000 or capacity ~= math.floor(capacity) then return err("capacity must be an integer in [1,10000]") end
+  local memory = p.memory or {}; local stack_bytes = p.stack_bytes or 0; local deadline = p.deadline or 0
+  if type(memory) ~= "table" or #memory > 16 then return err("memory must contain at most 16 descriptors") end
+  if type(stack_bytes) ~= "number" or stack_bytes < 0 or stack_bytes > 64 or stack_bytes ~= math.floor(stack_bytes) then return err("stack_bytes must be an integer in [0,64]") end
+  if type(deadline) ~= "number" or deadline < 0 or deadline ~= math.floor(deadline) then return err("deadline must be a nonnegative frame number") end
+  local memory_total=0
+  for _, m in ipairs(memory) do
+    if type(m) ~= "table" or type(m.addr) ~= "number" or m.addr < 0 or m.addr > 0xFFFF or m.addr ~= math.floor(m.addr) then return err("memory address must be a 16-bit integer") end
+    local len=m.len or 1
+    if type(len) ~= "number" or len < 1 or len > 64 or len ~= math.floor(len) then return err("memory length must be an integer in [1,64]") end
+    memory_total=memory_total+len
+  end
+  if memory_total > 256 then return err("total memory capture must be at most 256 bytes") end
   local cpu_tag = p.cpu_tag or ":maincpu"; local cpu = cpu_from_tag(cpu_tag)
   if not cpu or not cpu.debug then return err("CPU not found or debugger unavailable: " .. cpu_tag) end
-  local ctx = { cpu_tag=cpu_tag, by_pc={}, breakpoints={}, events={}, capacity=capacity, overflow=0, memory=p.memory or {}, stack_bytes=p.stack_bytes or 0, deadline=p.deadline or 0 }
-  for _, raw_pc in ipairs(pcs) do
-    local pc = raw_pc & 0xFFFF
-    if not ctx.by_pc[pc] then
-      local okc, bp = pcall(function() return cpu.debug:bpset(pc, "", "") end)
-      if not okc or not bp then sparse_cleanup(ctx); return err("bpset failed: " .. tostring(bp)) end
-      ctx.by_pc[pc]=true; ctx.breakpoints[#ctx.breakpoints+1]=bp
+  local ctx = { cpu_tag=cpu_tag, by_pc={}, breakpoints={}, events={}, capacity=capacity, overflow=0, memory=memory, stack_bytes=stack_bytes, deadline=deadline }
+  local setup_ok, setup_error = pcall(function()
+    for _, raw_pc in ipairs(pcs) do
+      if type(raw_pc) ~= "number" or raw_pc < 0 or raw_pc > 0xFFFF or raw_pc ~= math.floor(raw_pc) then error("PC must be a 16-bit integer") end
+      local pc = raw_pc & 0xFFFF
+      if not ctx.by_pc[pc] then
+        local okc, bp = pcall(function() return cpu.debug:bpset(pc, "", "") end)
+        if not okc or not bp then error("bpset failed: " .. tostring(bp)) end
+        ctx.by_pc[pc]=true; ctx.breakpoints[#ctx.breakpoints+1]=bp
+      end
     end
-  end
+  end)
+  if not setup_ok then sparse_cleanup(ctx); return err(tostring(setup_error)) end
   sparse_last = nil; sparse_ctx = ctx
   if M.paused then emu.unpause() end
   cpu.debug:go()
@@ -373,14 +393,14 @@ end
 handlers.mame_trace_pc_events_status = function()
   local ctx=sparse_ctx or sparse_last
   if not ctx then return ok({ active=false, events={}, count=0, overflow=0 }) end
-  return ok({ active=sparse_ctx ~= nil, count=#ctx.events, overflow=ctx.overflow, capacity=ctx.capacity, deadline=ctx.deadline, last=ctx.events[#ctx.events], events=ctx.events })
+  return ok({ active=sparse_ctx ~= nil, count=#ctx.events, overflow=ctx.overflow, cleanup_errors=ctx.cleanup_errors or 0, capacity=ctx.capacity, deadline=ctx.deadline, last=ctx.events[#ctx.events], events=ctx.events })
 end
 
 handlers.mame_trace_pc_events_stop = function()
   local ctx=sparse_ctx or sparse_last
   if not ctx then return ok({ active=false, events={}, count=0, overflow=0 }) end
   if sparse_ctx then sparse_cleanup(ctx); pcall(function() emu.pause() end) end
-  return ok({ active=false, count=#ctx.events, overflow=ctx.overflow, events=ctx.events })
+  return ok({ active=false, count=#ctx.events, overflow=ctx.overflow, cleanup_errors=ctx.cleanup_errors or 0, events=ctx.events })
 end
 
 local function finalize_step(result, status)
@@ -725,7 +745,10 @@ local function poll()
   -- are left stopped and do not get resumed by this observer.
   if sparse_ctx then
     local ctx=sparse_ctx; local cpu=cpu_from_tag(ctx.cpu_tag)
-    if M.debugger.execution_state == "stop" then
+    local screen=M.screens:at(1)
+    if ctx.deadline > 0 and screen and screen:frame_number() >= ctx.deadline then
+      sparse_cleanup(ctx); pcall(function() emu.pause() end)
+    elseif M.debugger.execution_state == "stop" then
       local pc=cpu.state["PC"].value & 0xFFFF
       if ctx.by_pc[pc] then
         if #ctx.events < ctx.capacity then

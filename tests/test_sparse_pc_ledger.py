@@ -37,3 +37,14 @@ def test_sparse_ledger_schema_bounds_the_capture():
     assert props["stackBytes"]["maximum"] == 64
     assert TOOLS["mame_trace_pc_events_status"]["schema"]["additionalProperties"] is False
     assert TOOLS["mame_trace_pc_events_stop"]["schema"]["additionalProperties"] is False
+
+
+def test_sparse_ledger_validates_payload_and_deadline_in_bridge():
+    text = BRIDGE.read_text()
+    assert "#memory > 16" in text
+    assert "memory_total > 256" in text
+    assert "len > 64" in text
+    assert "PC must be a 16-bit integer" in text
+    assert "deadline must be a nonnegative frame number" in text
+    assert "ctx.deadline > 0" in text
+    assert "cleanup_errors" in text
