@@ -133,8 +133,8 @@ class MameSession:
                         memory=memory or [], capacity=int(capacity), stack_bytes=int(stack_bytes),
                         cpu_tag=cpu_tag, deadline=int(deadline))
 
-    def trace_pc_events_status(self):
-        return self.cmd("mame_trace_pc_events_status")
+    def trace_pc_events_status(self, include_events=True):
+        return self.cmd("mame_trace_pc_events_status", include_events=bool(include_events))
 
     def trace_pc_events_stop(self):
         return self.cmd("mame_trace_pc_events_stop")

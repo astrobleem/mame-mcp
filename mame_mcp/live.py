@@ -72,7 +72,7 @@ def mame_trace_pc_events_start(args):
 
 
 def mame_trace_pc_events_status(args):
-    return _wrap(lambda: _require().trace_pc_events_status())
+    return _wrap(lambda: _require().trace_pc_events_status(bool(args.get("includeEvents", True))))
 
 
 def mame_trace_pc_events_stop(args):

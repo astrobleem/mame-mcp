@@ -390,10 +390,12 @@ handlers.mame_trace_pc_events_start = function(p)
   return ok({ active=true, pcs=pcs, capacity=capacity, events=0, overflow=0 })
 end
 
-handlers.mame_trace_pc_events_status = function()
+handlers.mame_trace_pc_events_status = function(p)
   local ctx=sparse_ctx or sparse_last
   if not ctx then return ok({ active=false, events={}, count=0, overflow=0 }) end
-  return ok({ active=sparse_ctx ~= nil, count=#ctx.events, overflow=ctx.overflow, cleanup_errors=ctx.cleanup_errors or 0, capacity=ctx.capacity, deadline=ctx.deadline, last=ctx.events[#ctx.events], events=ctx.events })
+  local result={ active=sparse_ctx ~= nil, count=#ctx.events, overflow=ctx.overflow, cleanup_errors=ctx.cleanup_errors or 0, capacity=ctx.capacity, deadline=ctx.deadline, last=ctx.events[#ctx.events] }
+  if p.include_events ~= false then result.events=ctx.events end
+  return ok(result)
 end
 
 handlers.mame_trace_pc_events_stop = function()

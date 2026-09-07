@@ -286,7 +286,7 @@ TOOLS: "OrderedDict[str, dict[str, Any]]" = OrderedDict(
         ("mame_trace_pc_events_start", {"category": "live", "summary": "Arm a bounded nonblocking sparse PC breakpoint ledger; execution resumes immediately.",
             "schema": {"type": "object", "properties": {"pcs": {"type": "array", "items": {"type": "integer"}, "minItems": 1, "maxItems": 32}, "memory": {"type": "array", "maxItems": 16, "items": {"type": "object", "properties": {"addr": {"type": "integer", "minimum": 0, "maximum": 65535}, "len": {"type": "integer", "minimum": 1, "maximum": 64}}, "required": ["addr"], "additionalProperties": False}}, "capacity": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 4096}, "stackBytes": {"type": "integer", "minimum": 0, "maximum": 64, "default": 0}, "cpuTag": {"type": "string", "default": ":maincpu"}, "deadline": {"type": "integer", "minimum": 0, "default": 0}}, "required": ["pcs"], "additionalProperties": False}}),
         ("mame_trace_pc_events_status", {"category": "live", "summary": "Read the active sparse PC ledger without stopping it.",
-            "schema": {"type": "object", "properties": {}, "additionalProperties": False}}),
+            "schema": {"type": "object", "properties": {"includeEvents": {"type": "boolean", "default": True}}, "additionalProperties": False}}),
         ("mame_trace_pc_events_stop", {"category": "live", "summary": "Stop the sparse PC ledger and remove all tracer-owned breakpoints.",
             "schema": {"type": "object", "properties": {}, "additionalProperties": False}}),
     ]
